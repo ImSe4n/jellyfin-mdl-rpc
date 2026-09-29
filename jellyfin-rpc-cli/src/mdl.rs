@@ -39,7 +39,6 @@ pub struct MdlStats {
     pub plan_to_watch: u32,
     pub episodes: u32,
     pub show_time: Option<String>,
-    pub avatar_url: Option<String>,
 }
 
 /// MDL usernames are letters, digits and `_ . -`; anything else is a config mistake.
@@ -68,7 +67,6 @@ pub fn card_from_stats(stats: &MdlStats) -> ProfileCard {
             "{} completed · {} watching · {} planned",
             stats.completed, stats.watching, stats.plan_to_watch
         ),
-        image_url: stats.avatar_url.clone(),
         image_text: Some(image_text),
         buttons: vec![
             Button::new("MDL Profile".to_string(), stats.profile_url.clone()),
@@ -175,7 +173,6 @@ mod tests {
             plan_to_watch: 56,
             episodes: 728,
             show_time: Some("28d 10h 28m".to_string()),
-            avatar_url: Some("https://i.mydramalist.com/VXykQy_1c.jpg".to_string()),
         }
     }
 
@@ -210,7 +207,7 @@ mod tests {
             "dropped":0,"watching":1,"plan_to_watch":56,"completed":43,"on_hold":0}"#;
         let parsed: MdlStats = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.completed, 43);
-        assert_eq!(parsed.avatar_url, None);
+        assert_eq!(parsed.episodes, 728);
     }
 
     #[test]

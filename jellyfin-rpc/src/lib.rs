@@ -48,16 +48,16 @@ pub struct Client {
     profile_card: Option<ProfileCard>,
 }
 
-/// A static card that `Client::set_activity()` shows in place of the media activity,
+/// A card that `Client::set_activity()` shows in place of the media activity,
 /// e.g. a summary of the user's profile on a tracking site.
 ///
 /// It is only shown while something is playing; when nothing is, the activity is
-/// still cleared as usual.
+/// still cleared as usual. It reuses the media's image, time bar and paused badge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ProfileCard {
     pub details: String,
     pub state: String,
-    pub image_url: Option<String>,
+    /// Hover text for the image; the media's own hover text is kept if `None`.
     pub image_text: Option<String>,
     /// Discord shows at most two buttons; any extra are ignored.
     pub buttons: Vec<Button>,
@@ -260,6 +260,12 @@ impl Client {
 
             let status_display_type = self.get_status_display_type();
 
+            // The profile card keeps the media's image, time bar and paused badge.
+            let profile_activity = self
+                .profile_card
+                .as_ref()
+                .map(|card| Self::profile_card_activity(card, assets.clone(), timestamps.clone()));
+
             activity = activity
                 .timestamps(timestamps)
                 .assets(assets)
@@ -267,31 +273,30 @@ impl Client {
                 .state(&state)
                 .status_display_type(status_display_type.into());
 
-            if let Some(card) = &self.profile_card {
-                self.discord_ipc_client
-                    .set_activity(Self::profile_card_activity(card))?;
-            } else {
-                self.discord_ipc_client.set_activity(activity)?;
-            }
+            self.discord_ipc_client
+                .set_activity(profile_activity.unwrap_or(activity))?;
 
             return Ok(format!("{} | {}", details, state));
         }
         Ok(String::new())
     }
 
-    fn profile_card_activity(card: &ProfileCard) -> Activity<'_> {
+    pub(crate) fn profile_card_activity<'a>(
+        card: &'a ProfileCard,
+        media_assets: Assets<'a>,
+        media_timestamps: Timestamps,
+    ) -> Activity<'a> {
+        let assets = match &card.image_text {
+            Some(image_text) => media_assets.large_text(image_text),
+            None => media_assets,
+        };
+
         let mut activity = Activity::new()
             .activity_type(ActivityType::Watching)
             .details(&card.details)
-            .state(&card.state);
-
-        if let Some(image_url) = &card.image_url {
-            let mut assets = Assets::new().large_image(image_url);
-            if let Some(image_text) = &card.image_text {
-                assets = assets.large_text(image_text);
-            }
-            activity = activity.assets(assets);
-        }
+            .state(&card.state)
+            .assets(assets)
+            .timestamps(media_timestamps);
 
         if !card.buttons.is_empty() {
             activity = activity.buttons(
