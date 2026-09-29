@@ -1,13 +1,18 @@
 use clap::Parser;
 use colored::Colorize;
 use config::{get_config_path, get_urls_path, Config};
-use jellyfin_rpc::{Client, DisplayFormat, EpisodeDisplayOptions, VERSION};
-use log::{debug, error, info};
+use jellyfin_rpc::{Client, DisplayFormat, EpisodeDisplayOptions, ProfileCard, VERSION};
+use log::{debug, error, info, warn};
+use mdl::{MdlConfig, Phase, Rotation};
 use retry::retry_with_index;
 use simple_logger::SimpleLogger;
-use std::{thread::sleep, time::Duration};
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
 use time::macros::format_description;
 mod config;
+mod mdl;
 #[cfg(feature = "updates")]
 mod updates;
 
@@ -208,10 +213,36 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
     info!("Connected!");
 
+    let mdl_config = conf.mdl;
+    if let Some(mdl) = &mdl_config {
+        info!(
+            "MyDramaList card enabled for {}, switching every {}s",
+            mdl.username,
+            mdl.switch_interval.as_secs()
+        );
+        mdl::spawn_refresher(mdl.clone());
+    }
+    let mut rotation = mdl_config
+        .as_ref()
+        .map(|mdl| Rotation::new(mdl.switch_interval));
+    let mut phase = Phase::Media;
+
     let mut currently_playing = String::new();
 
     loop {
         sleep(Duration::from_secs(args.wait_time as u64));
+
+        if let (Some(rotation), Some(mdl)) = (rotation.as_mut(), mdl_config.as_ref()) {
+            let next = rotation.update(Instant::now(), !currently_playing.is_empty());
+            if next != phase {
+                phase = next;
+                debug!("Switching to {:?} card", phase);
+                client.set_profile_card(match phase {
+                    Phase::Profile => load_profile_card(mdl),
+                    Phase::Media => None,
+                });
+            }
+        }
 
         match client.set_activity() {
             Ok(activity) => {
@@ -250,6 +281,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
                 info!("Reconnected!");
             }
+        }
+    }
+}
+
+/// Missing or unreadable stats just mean the now-playing card stays up.
+fn load_profile_card(mdl: &MdlConfig) -> Option<ProfileCard> {
+    match mdl::load_stats(&mdl.stats_file) {
+        Ok(stats) => Some(mdl::card_from_stats(&stats)),
+        Err(err) => {
+            warn!(
+                "No MyDramaList stats at {} ({}), keeping now-playing card",
+                mdl.stats_file, err
+            );
+            None
         }
     }
 }

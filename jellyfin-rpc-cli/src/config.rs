@@ -1,7 +1,9 @@
+use crate::mdl::{self, MdlConfig};
 use jellyfin_rpc::{Button, DisplayFormat, MediaType, StatusType};
-use log::debug;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::time::Duration;
 
 /// Main struct containing every other struct in the file.
 ///
@@ -17,6 +19,8 @@ pub struct Config {
     pub imgur: Imgur,
     /// Images configuration.
     pub images: Images,
+    /// MyDramaList profile card, if configured and valid.
+    pub mdl: Option<MdlConfig>,
 }
 
 /// This struct contains every "required" part of the config.
@@ -101,6 +105,56 @@ pub struct ConfigBuilder {
     pub discord: Option<DiscordBuilder>,
     pub imgur: Option<Imgur>,
     pub images: Option<ImagesBuilder>,
+    pub mdl: Option<MdlBuilder>,
+}
+
+/// `mdl` section: shows a MyDramaList profile card alternating with now-playing.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct MdlBuilder {
+    /// MyDramaList username whose public profile is shown.
+    pub username: String,
+    /// Python interpreter that has curl_cffi installed.
+    pub python: String,
+    /// Path to mdl_fetch.py.
+    pub script: String,
+    /// Where mdl_fetch.py writes the stats JSON.
+    pub stats_file: String,
+    /// Seconds each card stays up before switching. Default 30, minimum 15.
+    pub switch_seconds: Option<u64>,
+    /// Hours between MyDramaList fetches. Default 6, minimum 1.
+    pub refresh_hours: Option<u64>,
+}
+
+impl MdlBuilder {
+    /// Returns `None` (and logs why) if the section is unusable, so a bad `mdl`
+    /// section disables only the profile card, never the rest of the RPC.
+    fn build(self) -> Option<MdlConfig> {
+        if !mdl::is_valid_username(&self.username) {
+            warn!(
+                "mdl.username {:?} is not a valid MyDramaList username; profile card disabled",
+                self.username
+            );
+            return None;
+        }
+
+        let switch_seconds = self
+            .switch_seconds
+            .unwrap_or(mdl::DEFAULT_SWITCH_SECONDS)
+            .max(mdl::MIN_SWITCH_SECONDS);
+        let refresh_hours = self
+            .refresh_hours
+            .unwrap_or(mdl::DEFAULT_REFRESH_HOURS)
+            .max(mdl::MIN_REFRESH_HOURS);
+
+        Some(MdlConfig {
+            username: self.username,
+            python: self.python,
+            script: self.script,
+            stats_file: self.stats_file,
+            switch_interval: Duration::from_secs(switch_seconds),
+            refresh_interval: Duration::from_secs(refresh_hours * 3600),
+        })
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -252,6 +306,7 @@ impl ConfigBuilder {
             discord: None,
             imgur: None,
             images: None,
+            mdl: None,
         }
     }
 
@@ -466,6 +521,7 @@ impl ConfigBuilder {
                 bg_blur: image_bg_blur,
                 corner_radius: image_corner_radius,
             },
+            mdl: self.mdl.and_then(MdlBuilder::build),
         }
     }
 }

@@ -45,6 +45,22 @@ pub struct Client {
     process_images: bool,
     image_processing_options: external::image_utils::ImageProcessingOptions,
     large_image_text: String,
+    profile_card: Option<ProfileCard>,
+}
+
+/// A static card that `Client::set_activity()` shows in place of the media activity,
+/// e.g. a summary of the user's profile on a tracking site.
+///
+/// It is only shown while something is playing; when nothing is, the activity is
+/// still cleared as usual.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileCard {
+    pub details: String,
+    pub state: String,
+    pub image_url: Option<String>,
+    pub image_text: Option<String>,
+    /// Discord shows at most two buttons; any extra are ignored.
+    pub buttons: Vec<Button>,
 }
 
 impl Client {
@@ -87,6 +103,14 @@ impl Client {
     pub fn clear_activity(&mut self) -> JfResult<()> {
         self.discord_ipc_client.clear_activity()?;
         Ok(())
+    }
+
+    /// Sets (or with `None`, removes) a card to show instead of the media activity.
+    ///
+    /// `set_activity()` still returns the media's `details | state` string while the
+    /// card is shown, so callers can keep tracking what is playing.
+    pub fn set_profile_card(&mut self, card: Option<ProfileCard>) {
+        self.profile_card = card;
     }
 
     /// Gathers information from jellyfin about what is being played and displays it according to the options supplied to the builder.
@@ -243,11 +267,43 @@ impl Client {
                 .state(&state)
                 .status_display_type(status_display_type.into());
 
-            self.discord_ipc_client.set_activity(activity)?;
+            if let Some(card) = &self.profile_card {
+                self.discord_ipc_client
+                    .set_activity(Self::profile_card_activity(card))?;
+            } else {
+                self.discord_ipc_client.set_activity(activity)?;
+            }
 
             return Ok(format!("{} | {}", details, state));
         }
         Ok(String::new())
+    }
+
+    fn profile_card_activity(card: &ProfileCard) -> Activity<'_> {
+        let mut activity = Activity::new()
+            .activity_type(ActivityType::Watching)
+            .details(&card.details)
+            .state(&card.state);
+
+        if let Some(image_url) = &card.image_url {
+            let mut assets = Assets::new().large_image(image_url);
+            if let Some(image_text) = &card.image_text {
+                assets = assets.large_text(image_text);
+            }
+            activity = activity.assets(assets);
+        }
+
+        if !card.buttons.is_empty() {
+            activity = activity.buttons(
+                card.buttons
+                    .iter()
+                    .take(2)
+                    .map(|b| ActButton::new(&b.name, &b.url))
+                    .collect(),
+            );
+        }
+
+        activity
     }
 
     fn get_session(&mut self) -> JfResult<()> {
@@ -1398,6 +1454,7 @@ impl ClientBuilder {
                 corner_radius: self.image_corner_radius,
             },
             large_image_text: self.large_image_text,
+            profile_card: None,
         })
     }
 }
