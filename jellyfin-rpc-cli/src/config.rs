@@ -339,7 +339,8 @@ impl ConfigBuilder {
         debug!("Config path is: {}", path);
 
         let data = std::fs::read_to_string(path)?;
-        let config = serde_json::from_str(&data)?;
+        // Notepad and the installer can save UTF-8 with a BOM, which serde_json rejects.
+        let config = serde_json::from_str(data.trim_start_matches('\u{feff}'))?;
 
         debug!("Config loaded successfully");
 
@@ -547,5 +548,23 @@ impl ConfigBuilder {
             },
             mdl: self.mdl.and_then(|mdl| mdl.build(config_path)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_saved_with_a_utf8_bom_still_loads() {
+        let file_name = format!("jellyfin-rpc-bom-test-{}.json", std::process::id());
+        let path = env::temp_dir().join(file_name);
+        let json = r#"{"jellyfin": {"url": "http://localhost:8096", "api_key": "key", "username": "me"}}"#;
+        std::fs::write(&path, format!("\u{feff}{json}")).unwrap();
+
+        let loaded = Config::builder().load(path.to_str().unwrap());
+        std::fs::remove_file(&path).unwrap();
+
+        assert_eq!(loaded.unwrap().jellyfin.url, "http://localhost:8096");
     }
 }
