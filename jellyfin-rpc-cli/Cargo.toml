@@ -16,6 +16,10 @@ exclude = [
 name = "jellyfin-rpc"
 path = "src/main.rs"
 
+[[bin]]
+name = "jellyfin-rpc-background"
+path = "src/background.rs"
+
 [features]
 default = ["updates"]
 updates = ["dep:reqwest"]
