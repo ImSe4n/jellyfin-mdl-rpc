@@ -84,7 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             error!("{}", error);
             error!(
                 "Please create a proper config file: {}",
-                "https://github.com/JustRadical/jellyfin-rpc/wiki/Setup".green()
+                "https://github.com/ImSe4n/jellyfin-mdl-rpc/blob/main/docs/CONFIGURATION.md".green()
             );
             std::process::exit(1)
         }
