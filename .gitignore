@@ -8,3 +8,8 @@
 /.vscode
 /jftest
 /shell.nix
+
+# Personal config and MyDramaList stats; never commit these
+/urls.json
+mdl_stats.json
+.mdl_stats_*.tmp

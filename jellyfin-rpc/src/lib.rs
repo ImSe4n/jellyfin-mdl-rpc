@@ -45,6 +45,25 @@ pub struct Client {
     process_images: bool,
     image_processing_options: external::image_utils::ImageProcessingOptions,
     large_image_text: String,
+    profile_card: Option<ProfileCard>,
+    /// When the current paused/untimed stretch began, keyed by item and state, so the
+    /// elapsed counter keeps running across card switches instead of restarting.
+    untimed_since: Option<(String, i64)>,
+}
+
+/// A card that `Client::set_activity()` shows in place of the media activity,
+/// e.g. a summary of the user's profile on a tracking site.
+///
+/// It is only shown while something is playing; when nothing is, the activity is
+/// still cleared as usual. It reuses the media's image, time bar and paused badge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProfileCard {
+    pub details: String,
+    pub state: String,
+    /// Hover text for the image; the media's own hover text is kept if `None`.
+    pub image_text: Option<String>,
+    /// Discord shows at most two buttons; any extra are ignored.
+    pub buttons: Vec<Button>,
 }
 
 impl Client {
@@ -87,6 +106,14 @@ impl Client {
     pub fn clear_activity(&mut self) -> JfResult<()> {
         self.discord_ipc_client.clear_activity()?;
         Ok(())
+    }
+
+    /// Sets (or with `None`, removes) a card to show instead of the media activity.
+    ///
+    /// `set_activity()` still returns the media's `details | state` string while the
+    /// card is shown, so callers can keep tracking what is playing.
+    pub fn set_profile_card(&mut self, card: Option<ProfileCard>) {
+        self.profile_card = card;
     }
 
     /// Gathers information from jellyfin about what is being played and displays it according to the options supplied to the builder.
@@ -168,11 +195,32 @@ impl Client {
             }
 
             let mut timestamps = Timestamps::new();
+            let play_time = session.get_time()?;
 
-            match session.get_time()? {
+            // Without an explicit start, Discord restarts its elapsed counter whenever the
+            // activity changes (e.g. switching cards), so pin one for the untimed stretch.
+            let untimed_key = match play_time {
+                PlayTime::Some(..) => None,
+                PlayTime::Paused => Some(format!("{}:paused", session.item_id)),
+                PlayTime::None => Some(format!("{}:untimed", session.item_id)),
+            };
+            let now = SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_secs() as i64;
+            let previous = self.untimed_since.take();
+            self.untimed_since = untimed_key.map(|key| untimed_start(previous, key, now));
+
+            match play_time {
                 PlayTime::Some(start, end) => timestamps = timestamps.start(start).end(end),
-                PlayTime::None => (),
+                PlayTime::None => {
+                    if let Some((_, since)) = &self.untimed_since {
+                        timestamps = timestamps.start(*since);
+                    }
+                }
                 PlayTime::Paused if self.show_paused => {
+                    if let Some((_, since)) = &self.untimed_since {
+                        timestamps = timestamps.start(*since);
+                    }
                     assets = assets
                         .small_image("https://i.imgur.com/wlHSvYy.png")
                         .small_text("Paused");
@@ -214,7 +262,7 @@ impl Client {
             let mut image_text = self.get_image_text();
 
             if image_text.is_empty() {
-                image_text = format!("Jellyfin-RPC v{}", VERSION.unwrap_or("UNKNOWN"));
+                image_text = session.now_playing_item.name.to_string();
             }
 
             if image_text.len() > 128 {
@@ -236,6 +284,12 @@ impl Client {
 
             let status_display_type = self.get_status_display_type();
 
+            // The profile card keeps the media's image, time bar and paused badge.
+            let profile_activity = self
+                .profile_card
+                .as_ref()
+                .map(|card| Self::profile_card_activity(card, assets.clone(), timestamps.clone()));
+
             activity = activity
                 .timestamps(timestamps)
                 .assets(assets)
@@ -243,11 +297,42 @@ impl Client {
                 .state(&state)
                 .status_display_type(status_display_type.into());
 
-            self.discord_ipc_client.set_activity(activity)?;
+            self.discord_ipc_client
+                .set_activity(profile_activity.unwrap_or(activity))?;
 
             return Ok(format!("{} | {}", details, state));
         }
         Ok(String::new())
+    }
+
+    pub(crate) fn profile_card_activity<'a>(
+        card: &'a ProfileCard,
+        media_assets: Assets<'a>,
+        media_timestamps: Timestamps,
+    ) -> Activity<'a> {
+        let assets = match &card.image_text {
+            Some(image_text) => media_assets.large_text(image_text),
+            None => media_assets,
+        };
+
+        let mut activity = Activity::new()
+            .activity_type(ActivityType::Watching)
+            .details(&card.details)
+            .state(&card.state)
+            .assets(assets)
+            .timestamps(media_timestamps);
+
+        if !card.buttons.is_empty() {
+            activity = activity.buttons(
+                card.buttons
+                    .iter()
+                    .take(2)
+                    .map(|b| ActButton::new(&b.name, &b.url))
+                    .collect(),
+            );
+        }
+
+        activity
     }
 
     fn get_session(&mut self) -> JfResult<()> {
@@ -739,7 +824,7 @@ impl Client {
                     .image_text
                     .as_ref()
                     .unwrap();
-                self.parse_music_display(display_image_format)
+                self.parse_music_display(&display_image_format.replace("{__default}", "{album}"))
             }
             MediaType::Movie => {
                 let display_image_format = &self
@@ -748,7 +833,7 @@ impl Client {
                     .image_text
                     .as_ref()
                     .unwrap();
-                self.parse_movies_display(display_image_format)
+                self.parse_movies_display(&display_image_format.replace("{__default}", "{title}"))
             }
             MediaType::Episode => {
                 let display_image_format = &self
@@ -757,7 +842,9 @@ impl Client {
                     .image_text
                     .as_ref()
                     .unwrap();
-                self.parse_episodes_display(display_image_format)
+                self.parse_episodes_display(
+                    &display_image_format.replace("{__default}", "{show-title}"),
+                )
             }
             _ => "".to_string(),
         }
@@ -839,7 +926,7 @@ pub struct DisplayFormat {
 impl From<Vec<String>> for DisplayFormat {
     fn from(items: Vec<String>) -> Self {
         let details_text = "{__default}".to_string();
-        let image_text = "Jellyfin-RPC v{version}".to_string();
+        let image_text = "{__default}".to_string();
         let mut state_text = "{__default}".to_string();
 
         let items_joined = items
@@ -890,7 +977,7 @@ impl From<EpisodeDisplayOptions> for DisplayFormat {
                 format!("{}{}{} {}", season_tag, divider, episode_tag, "{title}")
             }
         };
-        let image_text = "Jellyfin-RPC v{version}".to_string();
+        let image_text = "{__default}".to_string();
 
         DisplayFormat {
             details_text: Some(details_text),
@@ -1398,6 +1485,17 @@ impl ClientBuilder {
                 corner_radius: self.image_corner_radius,
             },
             large_image_text: self.large_image_text,
+            profile_card: None,
+            untimed_since: None,
         })
+    }
+}
+
+/// Keeps the previous start time while the same item stays in the same untimed state,
+/// otherwise starts counting from `now`.
+pub(crate) fn untimed_start(previous: Option<(String, i64)>, key: String, now: i64) -> (String, i64) {
+    match previous {
+        Some((prev_key, since)) if prev_key == key => (key, since),
+        _ => (key, now),
     }
 }

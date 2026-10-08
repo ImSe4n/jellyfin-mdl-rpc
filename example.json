@@ -1,8 +1,8 @@
 {
     "jellyfin": {
         "url": "https://example.com",
-        "api_key": "sadasodsapasdskd",
-        "username": "your_username_here",
+        "api_key": "YOUR_JELLYFIN_API_KEY",
+        "username": "your_jellyfin_username",
         "music": {
             "display": ["genres"],
             "separator": "-"
@@ -36,7 +36,7 @@
         "show_paused": true
     },
     "imgur": {
-        "client_id": "asdjdjdg394209fdjs093"
+        "client_id": "YOUR_IMGUR_CLIENT_ID"
     },
     "images": {
         "enable_images": true,
@@ -47,5 +47,13 @@
         "bg": true,
         "bg_blur": 3,
         "corner_radius": 4
+    },
+    "mdl": {
+        "username": "YOUR_MDL_USERNAME",
+        "python": "/full/path/to/python",
+        "script": "/full/path/to/jellyfin-mdl-rpc/mdl/mdl_fetch.py",
+        "stats_file": "/full/path/to/jellyfin-rpc/mdl_stats.json",
+        "switch_seconds": 30,
+        "refresh_hours": 6
     }
 }

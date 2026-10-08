@@ -1,13 +1,18 @@
 use clap::Parser;
 use colored::Colorize;
 use config::{get_config_path, get_urls_path, Config};
-use jellyfin_rpc::{Client, DisplayFormat, EpisodeDisplayOptions, VERSION};
-use log::{debug, error, info};
+use jellyfin_rpc::{Client, DisplayFormat, EpisodeDisplayOptions, ProfileCard, VERSION};
+use log::{debug, error, info, warn};
+use mdl::{MdlConfig, Rotation};
 use retry::retry_with_index;
 use simple_logger::SimpleLogger;
-use std::{thread::sleep, time::Duration};
+use std::{
+    thread::sleep,
+    time::{Duration, Instant},
+};
 use time::macros::format_description;
 mod config;
+mod mdl;
 #[cfg(feature = "updates")]
 mod updates;
 
@@ -105,7 +110,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .image_background(conf.images.bg)
         .image_background_blur(conf.images.bg_blur)
         .image_corner_radius(conf.images.corner_radius)
-        .large_image_text(format!("Jellyfin-RPC v{}", VERSION.unwrap_or("UNKNOWN")))
         .imgur_urls_file_location(args.image_urls.clone().unwrap_or(get_urls_path()?))
         .litterbox_urls_file_location(args.image_urls.unwrap_or(get_urls_path()?));
 
@@ -208,10 +212,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     .unwrap();
     info!("Connected!");
 
+    let mdl_config = conf.mdl;
+    if let Some(mdl) = &mdl_config {
+        info!(
+            "MyDramaList card enabled for {}, switching every {}s",
+            mdl.username,
+            mdl.switch_interval.as_secs()
+        );
+        mdl::spawn_refresher(mdl.clone());
+    }
+    let mut rotation = mdl_config
+        .as_ref()
+        .map(|mdl| Rotation::new(mdl.switch_interval));
+    let mut step = 0;
+
     let mut currently_playing = String::new();
 
     loop {
         sleep(Duration::from_secs(args.wait_time as u64));
+
+        if let (Some(rotation), Some(mdl)) = (rotation.as_mut(), mdl_config.as_ref()) {
+            let next = rotation.update(Instant::now(), !currently_playing.is_empty());
+            if next != step {
+                step = next;
+                debug!("Switching to card step {}", step);
+                let card = load_profile_card(mdl, step);
+                client.set_profile_card(card);
+            }
+        }
 
         match client.set_activity() {
             Ok(activity) => {
@@ -250,6 +278,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap();
                 info!("Reconnected!");
             }
+        }
+    }
+}
+
+/// Picks the card for this rotation step; `None` shows the now-playing card. Missing
+/// or unreadable stats just mean the now-playing card stays up.
+fn load_profile_card(mdl: &MdlConfig, step: usize) -> Option<ProfileCard> {
+    if step == 0 {
+        return None;
+    }
+    match mdl::load_stats(&mdl.stats_file) {
+        Ok(stats) => {
+            let mut cards = mdl::profile_cards(&stats);
+            let index = mdl::card_for_step(step, cards.len())?;
+            Some(cards.swap_remove(index))
+        }
+        Err(err) => {
+            warn!(
+                "No MyDramaList stats at {} ({}), keeping now-playing card",
+                mdl.stats_file, err
+            );
+            None
         }
     }
 }
