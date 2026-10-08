@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or(get_config_path().expect("default config path couldn't be determined"));
 
     let conf = match Config::builder().load(conf_path) {
-        Ok(file) => file.build(),
+        Ok(file) => file.build(conf_path),
         Err(error) => {
             error!(
                 "Config file could not be loaded at path: {}",

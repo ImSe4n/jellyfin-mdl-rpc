@@ -1,4 +1,4 @@
-use crate::mdl::{self, MdlConfig};
+use crate::mdl::{self, fetcher, Fetcher, MdlConfig};
 use jellyfin_rpc::{Button, DisplayFormat, MediaType, StatusType};
 use log::{debug, warn};
 use serde::{Deserialize, Serialize};
@@ -113,12 +113,16 @@ pub struct ConfigBuilder {
 pub struct MdlBuilder {
     /// MyDramaList username whose public profile is shown.
     pub username: String,
-    /// Python interpreter that has curl_cffi installed.
-    pub python: String,
+    /// Python interpreter that has curl_cffi installed. Set with `script`, or leave
+    /// both out to use the bundled fetcher.
+    pub python: Option<String>,
     /// Path to mdl_fetch.py.
-    pub script: String,
-    /// Where mdl_fetch.py writes the stats JSON.
-    pub stats_file: String,
+    pub script: Option<String>,
+    /// Path to a standalone fetcher executable. Defaults to the bundled
+    /// `mdl_fetch` next to jellyfin-rpc.
+    pub fetcher: Option<String>,
+    /// Where the fetcher writes the stats JSON. Defaults to beside the config file.
+    pub stats_file: Option<String>,
     /// Seconds each card stays up before switching. Default 30, minimum 5.
     pub switch_seconds: Option<u64>,
     /// Hours between MyDramaList fetches; fractions allowed. Default 6, minimum 0.5.
@@ -128,13 +132,33 @@ pub struct MdlBuilder {
 impl MdlBuilder {
     /// Returns `None` (and logs why) if the section is unusable, so a bad `mdl`
     /// section disables only the profile card, never the rest of the RPC.
-    fn build(self) -> Option<MdlConfig> {
+    fn build(self, config_path: &str) -> Option<MdlConfig> {
         if !mdl::is_valid_username(&self.username) {
             warn!(
                 "mdl.username {:?} is not a valid MyDramaList username; profile card disabled",
                 self.username
             );
             return None;
+        }
+
+        let exe_dir = env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|dir| dir.to_path_buf()));
+        let resolved = fetcher::resolve(self.python, self.script, self.fetcher, exe_dir.as_deref());
+        let fetcher = match resolved {
+            Ok(fetcher) => fetcher,
+            Err(reason) => {
+                warn!("{}; profile card disabled", reason);
+                return None;
+            }
+        };
+        if let Fetcher::Exe(path) = &fetcher {
+            if !path.exists() {
+                warn!(
+                    "MyDramaList fetcher not found at {}; set mdl.python and mdl.script to use mdl_fetch.py",
+                    path.display()
+                );
+            }
         }
 
         let switch_seconds = self
@@ -148,9 +172,8 @@ impl MdlBuilder {
 
         Some(MdlConfig {
             username: self.username,
-            python: self.python,
-            script: self.script,
-            stats_file: self.stats_file,
+            fetcher,
+            stats_file: fetcher::stats_file(self.stats_file, config_path),
             switch_interval: Duration::from_secs(switch_seconds),
             refresh_interval: Duration::try_from_secs_f64(refresh_hours * 3600.0)
                 .unwrap_or(Duration::from_secs_f64(mdl::DEFAULT_REFRESH_HOURS * 3600.0)),
@@ -323,7 +346,7 @@ impl ConfigBuilder {
         Ok(config)
     }
 
-    pub fn build(self) -> Config {
+    pub fn build(self, config_path: &str) -> Config {
         let username = match self.jellyfin.username {
             Username::Vec(usernames) => usernames,
             Username::String(username) => username.split(',').map(|u| u.to_string()).collect(),
@@ -522,7 +545,7 @@ impl ConfigBuilder {
                 bg_blur: image_bg_blur,
                 corner_radius: image_corner_radius,
             },
-            mdl: self.mdl.and_then(MdlBuilder::build),
+            mdl: self.mdl.and_then(|mdl| mdl.build(config_path)),
         }
     }
 }

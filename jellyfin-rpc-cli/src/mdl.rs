@@ -4,12 +4,13 @@
 //! Read-only. Nothing here writes to MyDramaList.
 
 use log::{info, warn};
-use std::process::Command;
 use std::thread;
 use std::time::{Duration, Instant};
 
 mod cards;
+pub mod fetcher;
 pub use cards::{load_stats, profile_cards};
+pub use fetcher::Fetcher;
 
 /// Presence is pushed every loop tick anyway, so this only guards against a card
 /// flickering past before anyone can read it.
@@ -23,8 +24,7 @@ pub const DEFAULT_REFRESH_HOURS: f64 = 6.0;
 #[derive(Debug, Clone, PartialEq)]
 pub struct MdlConfig {
     pub username: String,
-    pub python: String,
-    pub script: String,
+    pub fetcher: Fetcher,
     pub stats_file: String,
     pub switch_interval: Duration,
     pub refresh_interval: Duration,
@@ -92,11 +92,8 @@ pub fn spawn_refresher(config: MdlConfig) {
 }
 
 fn run_fetch(config: &MdlConfig) {
-    let mut command = Command::new(&config.python);
-    command
-        .arg(&config.script)
-        .arg(&config.username)
-        .arg(&config.stats_file);
+    let mut command = config.fetcher.command();
+    command.arg(&config.username).arg(&config.stats_file);
 
     #[cfg(windows)]
     {
@@ -118,8 +115,9 @@ fn run_fetch(config: &MdlConfig) {
             String::from_utf8_lossy(&output.stderr).trim()
         ),
         Err(err) => warn!(
-            "Could not run MyDramaList fetch script with {}: {}",
-            config.python, err
+            "Could not run MyDramaList fetcher {}: {}",
+            config.fetcher.program(),
+            err
         ),
     }
 }
