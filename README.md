@@ -43,16 +43,27 @@ clears like it normally would.
 - If the `mdl` section of your config is missing or broken, only the MDL cards
   turn off. Everything else keeps working.
 
-## Requirements
+## Install on Windows
 
-- A Jellyfin server and an API key for it
-- Discord desktop app, open and logged in, on the same machine
-- [Rust](https://rustup.rs) to build it (there are no prebuilt releases with the MDL
-  feature yet)
-- **For the MDL cards:** Python 3.8+ with `curl_cffi`, and a **public** MyDramaList
-  profile
+1. Download **`Jellyfin-MDL-RPC-Setup.exe`** from the
+   [latest release](https://github.com/ImSe4n/jellyfin-mdl-rpc/releases/latest).
+2. Run it. Windows will probably say **"Windows protected your PC"**, because the
+   installer isn't code-signed. Click **More info → Run anyway**.
+3. Fill in the wizard: your Jellyfin server address, an API key (in Jellyfin:
+   **Dashboard → API Keys → +**), your Jellyfin username, and your MyDramaList
+   username. Leave the MDL username blank if you don't want the MDL cards.
+4. Leave "Start when I log in" ticked if you want it running all the time.
 
-## Quick start
+That's everything. No Python, no editing files. It runs in the background with no
+window. The Start menu has shortcuts to start it, stop it, edit your settings,
+and view the log.
+
+You need the Discord desktop app open on the same PC, and your MyDramaList profile
+has to be public.
+
+## Install on Linux / macOS (or from source)
+
+You need [Rust](https://rustup.rs), plus Python 3.8+ for the MDL cards.
 
 ```sh
 git clone https://github.com/ImSe4n/jellyfin-mdl-rpc.git
@@ -68,12 +79,24 @@ setting up the `mdl` section. [`example.json`](example.json) is a starting point
 Run it:
 
 ```sh
-./target/release/jellyfin-rpc            # Linux / macOS
-.\target\release\jellyfin-rpc.exe        # Windows
+./target/release/jellyfin-rpc
 ```
 
 Start a drama on Jellyfin, and after 30 seconds your status switches to the MDL
 overview card.
+
+## Building the Windows installer
+
+Publishing a GitHub release builds the installer automatically and attaches it
+(see `.github/workflows/release.yml`). To build it yourself, you need Rust,
+[Inno Setup 6](https://jrsoftware.org/isdl.php), and a Python with PyInstaller:
+
+```powershell
+pip install pyinstaller -r mdl/requirements.txt
+.\installer\build.ps1 -Version 1.4.0
+```
+
+The result is `target\installer\Jellyfin-MDL-RPC-Setup.exe`.
 
 ## Running the tests
 

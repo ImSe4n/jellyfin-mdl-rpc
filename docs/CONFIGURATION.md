@@ -3,6 +3,12 @@
 Everything goes in one JSON file. This guide covers the required Jellyfin part,
 then the optional MyDramaList part.
 
+> **Used the Windows installer?** It already wrote this file for you. To change
+> something, open **Start menu → Jellyfin-MDL-RPC → Edit settings**, save, then use
+> **Stop Jellyfin-MDL-RPC** and start it again. The installer's `mdl` section is
+> just `{"username": "..."}`, because it uses the bundled `mdl_fetch.exe`, so you
+> can skip steps 4b and 4c below.
+
 ## 1. Where the config file goes
 
 | OS | Default path |
@@ -114,7 +120,16 @@ and create `mdl_stats.json`. If it fails, fix that first (see
 
 ### 4d. Add the `mdl` section
 
-Use **absolute paths**. Relative ones resolve from wherever you launched
+With the Windows installer, this is all you need. The bundled fetcher is found
+automatically, and the stats are saved next to `main.json`:
+
+```json
+"mdl": {
+    "username": "YOUR_MDL_USERNAME"
+}
+```
+
+Running from source, tell it which Python and script to use. Use **absolute paths**. Relative ones resolve from wherever you launched
 Jellyfin-RPC, which can change (for example, when it's a service).
 
 Windows:
@@ -149,9 +164,10 @@ In JSON, Windows backslashes have to be doubled (`\\`). Forward slashes
 | Key | Required | Default | What it does |
 |---|---|---|---|
 | `username` | yes | | Your MyDramaList username. |
-| `python` | yes | | Full path to the Python that has `curl_cffi`. |
-| `script` | yes | | Full path to `mdl/mdl_fetch.py` in your clone. |
-| `stats_file` | yes | | Where the stats JSON is written. Its folder must already exist. |
+| `python` | from source | | Full path to the Python that has `curl_cffi`. Set it together with `script`. |
+| `script` | from source | | Full path to `mdl/mdl_fetch.py` in your clone. |
+| `fetcher` | no | `mdl_fetch.exe` next to `jellyfin-rpc` | Path to a standalone fetcher program. Only used when `python` and `script` aren't set. |
+| `stats_file` | no | `mdl_stats.json` next to `main.json` | Where the stats JSON is written. Its folder must already exist. |
 | `switch_seconds` | no | `30` | How long each card stays up. Minimum `5`. |
 | `refresh_hours` | no | `6` | How often to re-fetch MDL. Decimals like `0.5` are allowed; the minimum is `0.5`. |
 
@@ -208,7 +224,9 @@ Then play something on Jellyfin and wait one `switch_seconds`.
 | Log message | Cause and fix |
 |---|---|
 | `mdl.username "..." is not a valid MyDramaList username` | There's a typo or a disallowed character in the username. Copy it from your profile URL. |
-| `Could not run MyDramaList fetch script with ...` | The `python` path is wrong. Re-run the command in step 4b and paste the exact path it prints. |
+| `Could not run MyDramaList fetcher ...` | The `python` path is wrong. Re-run the command in step 4b and paste the exact path it prints. |
+| `MyDramaList fetcher not found at ...` | You left out `python` and `script`, but there's no `mdl_fetch.exe` next to `jellyfin-rpc`. From source, set `python` and `script`. With the installer, reinstall. |
+| `set both mdl.python and mdl.script, or neither` | Only one of the two is set. |
 | `mdl_fetch failed: No module named 'curl_cffi'` | `curl_cffi` is installed for a different Python than the one in `python`. Run `<your python path> -m pip install curl_cffi`. |
 | `mdl_fetch failed: unexpected page title "Just a moment..."` | Cloudflare blocked the request. Update `curl_cffi` (`pip install -U curl_cffi`) and try again later. Don't lower `refresh_hours` to retry faster. |
 | `mdl_fetch failed: unexpected page title ...` (anything else) | The profile is private, the username is wrong, or MDL changed its page layout. Check step 4a. |
