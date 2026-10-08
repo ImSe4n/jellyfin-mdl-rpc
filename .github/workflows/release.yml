@@ -187,11 +187,32 @@ jobs:
           command: test
           args: --all-features --locked
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install PyInstaller and fetcher dependencies
+        run: python -m pip install pyinstaller -r mdl/requirements.txt
+
+      - name: Run MDL fetcher tests
+        working-directory: mdl
+        run: python -m unittest discover -s tests
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: ./installer/build.ps1 -Version ('${{ github.event.release.tag_name }}'.TrimStart('v'))
+
       - name: Release
         uses: softprops/action-gh-release@v1
         if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: target/release/jellyfin-rpc.exe
+          files: |
+            target/release/jellyfin-rpc.exe
+            target/installer/Jellyfin-MDL-RPC-Setup.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
